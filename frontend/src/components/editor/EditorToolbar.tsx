@@ -1,8 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEditorStore } from '../../store/useEditorStore';
-import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { useSimulatorStore, getBoardPinManager } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
+import { verifyCircuit, type VerificationResult } from '../../simulation/verify/circuitVerifier';
+import { buildInputFromStore } from '../../simulation/spice/storeAdapter';
+import { BOARD_PIN_GROUPS } from '../../simulation/spice/boardPinGroups';
+import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal';
+import type { PinSourceState } from '../../simulation/spice/types';
 import type { BoardKind, LanguageMode } from '../../types/board';
 import { BOARD_KIND_FQBN, BOARD_KIND_LABELS, BOARD_SUPPORTS_MICROPYTHON } from '../../types/board';
 import { compileCode } from '../../services/compilation';
@@ -104,6 +109,12 @@ export const EditorToolbar = ({
   const setElectricalPaused = useElectricalStore((s) => s.setPaused);
   const isBoardless = boards.length === 0;
   const digitalRunning = isBoardless && !electricalPaused;
+
+  // Circuit-verification modal state. When `pendingRun` is non-null we've
+  // already paid the cost of solving + analysing — the user can either
+  // bail out or proceed by running `pendingRun()`.
+  const [verification, setVerification] = useState<VerificationResult | null>(null);
+  const pendingRunRef = useRef<(() => void) | null>(null);
 
   // Helper: report a Run event to the backend for analytics. Resolves the
   // FQBN from the board kind so the backend can group by family/fqbn.
@@ -275,8 +286,104 @@ export const EditorToolbar = ({
   // Track whether we should auto-run after compilation completes
   const autoRunAfterCompile = useRef(false);
 
-  const handleRun = async () => {
+  /**
+   * Pre-flight safety check: solves the current circuit and flags shorts,
+   * LED over-current and resistor over-power. Returns the result. When the
+   * solver fails to converge (degenerate netlist, no power source, …) we
+   * silently report a clean result so the user isn't blocked on circuits
+   * that aren't physically meaningful yet.
+   */
+  const runVerification = useCallback(async (): Promise<VerificationResult | null> => {
+    try {
+      const sim = useSimulatorStore.getState();
+      // Skip if the circuit hasn't got anything analysable on it yet.
+      const hasSource = sim.components.some(
+        (c) => c.metadataId.startsWith('signal-generator') || c.metadataId.startsWith('battery'),
+      );
+      if (!hasSource && sim.boards.length === 0) return null;
+
+      const snap = {
+        components: sim.components.map((c) => ({
+          id: c.id,
+          metadataId: c.metadataId,
+          properties: c.properties,
+        })),
+        wires: sim.wires,
+        boards: sim.boards.map((b) => {
+          const pinStates: Record<string, PinSourceState> = {};
+          const pm = getBoardPinManager(b.id);
+          const group = BOARD_PIN_GROUPS[b.boardKind] ?? BOARD_PIN_GROUPS.default;
+          if (pm) {
+            const pinNames = new Set<string>();
+            for (const w of sim.wires) {
+              if (w.start.componentId === b.id) pinNames.add(w.start.pinName);
+              if (w.end.componentId === b.id) pinNames.add(w.end.pinName);
+            }
+            for (const pinName of pinNames) {
+              // No mapping table here — verification is a best-effort
+              // snapshot; pins we can't identify just stay floating, which
+              // matches their pre-Run state anyway.
+              const arduinoPin = Number.parseInt(pinName, 10);
+              if (Number.isNaN(arduinoPin)) continue;
+              if (pm.getPinState(arduinoPin)) {
+                pinStates[pinName] = { type: 'digital', v: group.vcc };
+              }
+            }
+          }
+          return { id: b.id, boardKind: b.boardKind, pinStates };
+        }),
+      };
+      const input = buildInputFromStore(snap);
+      return await verifyCircuit(input);
+    } catch (err) {
+      console.warn('[verifyCircuit] failed', err);
+      return null;
+    }
+  }, []);
+
+  /**
+   * Returns true if the caller should proceed inline. If the verifier finds
+   * errors we stash a resume callback in `pendingRunRef` and pop the
+   * verification modal; the resume callback re-enters `handleRun` with
+   * `skipVerify = true` so we don't loop. Warnings-only results don't
+   * block — they surface inline via `setMessage` and the run continues.
+   */
+  const checkOrBlock = useCallback(
+    async (resume: () => void): Promise<boolean> => {
+      const result = await runVerification();
+      if (!result) return true;
+      if (result.errors.length === 0 && result.warnings.length === 0) return true;
+      if (result.errors.length === 0) {
+        // Warnings only — non-blocking. Surface inline and continue.
+        const summary = result.warnings
+          .slice(0, 3)
+          .map((w) => w.message)
+          .join(' • ');
+        const more = result.warnings.length > 3 ? ` (+${result.warnings.length - 3} more)` : '';
+        setMessage({
+          type: 'error',
+          text: `${result.warnings.length} circuit warning${result.warnings.length === 1 ? '' : 's'}: ${summary}${more}`,
+        });
+        return true;
+      }
+      // Errors → block until the user explicitly chooses Run Anyway.
+      pendingRunRef.current = resume;
+      setVerification(result);
+      return false;
+    },
+    [runVerification],
+  );
+
+  const handleRun = async (skipVerify = false) => {
     console.log('[handleRun] click', { activeBoardId, running, codeChangedSinceLastCompile });
+
+    // Pre-flight: solve the circuit and check for shorts / overcurrent /
+    // overpower. If anything trips we hand control to the modal, which
+    // resumes by calling `handleRun(true)` for "Run anyway".
+    if (!skipVerify) {
+      const ok = await checkOrBlock(() => handleRun(true));
+      if (!ok) return;
+    }
 
     // Board-less circuits (SPICE-only digital / analog gallery) have no MCU
     // to start. Resuming the electrical solver replays any switch toggles
@@ -1040,6 +1147,21 @@ export const EditorToolbar = ({
         onClose={() => setInstallModalOpen(false)}
         libraries={pendingLibraries}
       />
+      {verification && (
+        <CircuitVerificationModal
+          result={verification}
+          onCancel={() => {
+            pendingRunRef.current = null;
+            setVerification(null);
+          }}
+          onRunAnyway={() => {
+            const resume = pendingRunRef.current;
+            pendingRunRef.current = null;
+            setVerification(null);
+            resume?.();
+          }}
+        />
+      )}
     </>
   );
 };

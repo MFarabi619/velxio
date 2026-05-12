@@ -168,10 +168,11 @@ frontend/src/__tests__/fixtures/rp2040-blink/
 **/*.ino.with_bootloader.hex
 **/*.ino.map
 **/*.ino.uf2
-.claude/scheduled_tasks.lock
+.claude/*
 backups/*
 # Sidecar checksum file for data/ backups (matches a specific .tar.gz snapshot)
 MANIFEST.sha256
 *.tar.gz
 *.sqlite-backup
 
+backend/.venv/*

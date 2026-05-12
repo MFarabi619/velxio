@@ -322,3 +322,71 @@ class I2CWriteSink:
                             'addr': self.addr, 'data': list(self._buf)})
                 self._buf = []
             return 0
+
+
+# ── Generic Proxy Slave (used for cross-board I2C bridging) ──────────────────
+
+class ProxySlave:
+    """
+    Generic 256-register I2C slave whose contents are pushed by the frontend.
+
+    Used by Interconnect when a non-ESP32 board (Uno, Pico, etc.) has an
+    I2C device wired to an ESP32 board through a cross-board bridge.  The
+    real device emulation lives on the frontend (an `I2CDevice` instance);
+    we mirror its register state into this proxy so the ESP32 firmware's
+    Wire master reads succeed synchronously inside QEMU.
+
+    Limitations
+    -----------
+    - Static at any given moment: the frontend pushes a fresh dump on
+      bridge install and on `update_registers` calls, but device state
+      changes during a transaction (e.g. between ESP32 firmware writing
+      a register pointer and reading the value) only see the snapshot
+      that was current at install time.  For sensors with stable
+      register maps (chip_id, calibration constants) this is fine.
+      For sensors that mutate on Wire.write (PCF8574 output latch,
+      memory device), the frontend must send fresh dumps after the
+      peer master writes.
+    - First-byte-as-pointer / data semantics match MPU6050 / BMP280.
+      Devices that use a different convention won't proxy correctly.
+    """
+
+    def __init__(self, addr: int, regs: bytes | bytearray | None = None) -> None:
+        self.addr       = addr
+        self.regs       = bytearray(regs) if regs else bytearray(256)
+        if len(self.regs) < 256:
+            self.regs.extend(bytes(256 - len(self.regs)))
+        self.reg_ptr    = 0
+        self.first_byte = True
+
+    def update_registers(self, regs: bytes | bytearray) -> None:
+        """Replace the register dump.  Pads or truncates to 256 bytes."""
+        new = bytearray(regs)
+        if len(new) < 256:
+            new.extend(bytes(256 - len(new)))
+        elif len(new) > 256:
+            new = new[:256]
+        self.regs = new
+
+    def handle_event(self, event: int) -> int:
+        op   = event & 0xFF
+        data = (event >> 8) & 0xFF
+
+        if op in (I2C_START_RECV, I2C_START_SEND):
+            self.first_byte = True
+            return 0
+        elif op == I2C_WRITE:
+            if self.first_byte:
+                self.reg_ptr    = data
+                self.first_byte = False
+            else:
+                self.regs[self.reg_ptr] = data
+                self.reg_ptr = (self.reg_ptr + 1) & 0xFF
+            return 0
+        elif op == I2C_READ:
+            val = self.regs[self.reg_ptr]
+            self.reg_ptr = (self.reg_ptr + 1) & 0xFF
+            return val
+        else:
+            self.first_byte = True
+            return 0

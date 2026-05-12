@@ -564,6 +564,28 @@ function updateI2CBridges(wires: readonly Wire[]): void {
 
     busA.attachBridge(busB);
     busB.attachBridge(busA);
+
+    // ── Cross-architecture proxy sync ─────────────────────────────────────
+    // When one side of the bridge is an ESP32 board, the I2CBusManager
+    // alone is not enough: ESP32 firmware runs in backend QEMU, and its
+    // Wire master reads land inside the QEMU thread synchronously.  A
+    // WebSocket round-trip to look up the peer device per byte would
+    // deadlock the I2C cycle.  Instead, snapshot the peer's local
+    // devices into a backend `ProxySlave` per address — QEMU then
+    // responds locally without leaving the worker.
+    if (isEsp32Bridge(boards.get(want.aBoard)?.kind ?? '')) {
+      const simA = runtime?.getBoardSimulator(want.aBoard);
+      if (simA?.syncProxyFromPeer) {
+        try { simA.syncProxyFromPeer(busB); } catch { /* ignore */ }
+      }
+    }
+    if (isEsp32Bridge(boards.get(want.bBoard)?.kind ?? '')) {
+      const simB = runtime?.getBoardSimulator(want.bBoard);
+      if (simB?.syncProxyFromPeer) {
+        try { simB.syncProxyFromPeer(busA); } catch { /* ignore */ }
+      }
+    }
+
     i2cBridges.set(key, () => {
       try {
         busA.detachBridge(busB);
@@ -574,6 +596,21 @@ function updateI2CBridges(wires: readonly Wire[]): void {
         busB.detachBridge(busA);
       } catch {
         /* ignore */
+      }
+      // Remove the proxy slaves we installed in the ESP32 worker.
+      // Cleared per-shim so other concurrent bridges keep their own
+      // proxies intact.
+      if (isEsp32Bridge(boards.get(want.aBoard)?.kind ?? '')) {
+        const simA = runtime?.getBoardSimulator(want.aBoard);
+        if (simA?.clearAllProxies) {
+          try { simA.clearAllProxies(); } catch { /* ignore */ }
+        }
+      }
+      if (isEsp32Bridge(boards.get(want.bBoard)?.kind ?? '')) {
+        const simB = runtime?.getBoardSimulator(want.bBoard);
+        if (simB?.clearAllProxies) {
+          try { simB.clearAllProxies(); } catch { /* ignore */ }
+        }
       }
     });
   }

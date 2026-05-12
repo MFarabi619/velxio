@@ -215,7 +215,21 @@ export async function loadExample(
       const editorStore = useEditorStore.getState();
       editorStore.setActiveGroup(groupId);
       editorStore.loadFiles(example.files);
+    } else if (liveBoard) {
+      // Single-file Arduino-style example. We must use `loadFiles` (not the
+      // legacy `setCode`) and explicitly switch the editor store to the
+      // board's file group: in board-less → board transitions the editor's
+      // `activeFileId` still points at an orphan ID from the deleted
+      // group, so `setCode` would silently no-op and the editor would
+      // appear blank. (Regression test: load-example-transitions.test.ts.)
+      const editorStore = useEditorStore.getState();
+      editorStore.setActiveGroup(liveBoard.activeFileGroupId);
+      const filename = liveBoard.boardKind === 'raspberry-pi-3' ? 'main.cpp' : 'sketch.ino';
+      editorStore.loadFiles([{ name: filename, content: example.code }]);
     } else {
+      // Truly board-less: write the placeholder code to whatever the editor
+      // currently shows (boardless examples ship a `void setup()/loop()`
+      // stub — content barely matters since the user won't compile it).
       useEditorStore.getState().setCode(example.code);
     }
 

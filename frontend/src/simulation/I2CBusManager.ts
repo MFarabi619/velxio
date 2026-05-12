@@ -28,6 +28,14 @@ export interface I2CDevice {
   readByte(): number;
   /** Optional: called on STOP condition */
   stop?(): void;
+  /**
+   * Optional snapshot of the device's 256-byte register state.  Used by
+   * the cross-board I2C proxy path (Interconnect → Esp32Bridge) to mirror
+   * the device into a backend `ProxySlave` so ESP32 firmware running in
+   * QEMU can read it synchronously.  Devices that don't have a register
+   * map (write-only sinks, time-based responders) can omit this.
+   */
+  dumpRegisters?(): Uint8Array;
 }
 
 /**
@@ -108,6 +116,14 @@ export class I2CBusManager implements TWIEventHandler {
   /** Remove a device by address */
   removeDevice(address: number): void {
     this.devices.delete(address);
+  }
+
+  /**
+   * Snapshot of currently-registered local devices.  Used by Interconnect
+   * to enumerate which addresses to mirror as proxies on a bridged ESP32.
+   */
+  listDevices(): I2CDevice[] {
+    return Array.from(this.devices.values());
   }
 
   // ── Cross-board bridging ────────────────────────────────────────────────
@@ -316,6 +332,11 @@ export class I2CMemoryDevice implements I2CDevice {
   stop(): void {
     this.firstByte = true;
   }
+
+  /** Return the full 256-byte register snapshot for cross-board proxying. */
+  dumpRegisters(): Uint8Array {
+    return new Uint8Array(this.registers);
+  }
 }
 
 /**
@@ -329,6 +350,20 @@ export class VirtualDS1307 implements I2CDevice {
 
   private toBCD(n: number): number {
     return ((Math.floor(n / 10) & 0xf) << 4) | ((n % 10) & 0xf);
+  }
+
+  /** Snapshot of the 7-byte time + 1-byte control register set. */
+  dumpRegisters(): Uint8Array {
+    const buf = new Uint8Array(256);
+    const now = new Date();
+    buf[0] = this.toBCD(now.getSeconds());
+    buf[1] = this.toBCD(now.getMinutes());
+    buf[2] = this.toBCD(now.getHours());
+    buf[3] = this.toBCD(now.getDay() + 1);
+    buf[4] = this.toBCD(now.getDate());
+    buf[5] = this.toBCD(now.getMonth() + 1);
+    buf[6] = this.toBCD(now.getFullYear() % 100);
+    return buf;
   }
 
   writeByte(value: number): boolean {
@@ -517,6 +552,11 @@ export class VirtualBMP280 implements I2CDevice {
 
   stop(): void {
     this.firstByte = true;
+  }
+
+  /** Snapshot the full 256-byte register file (calibration + ADC results). */
+  dumpRegisters(): Uint8Array {
+    return new Uint8Array(this.registers);
   }
 
   // ── Compensation formulas (Bosch 32-bit integer + double precision) ────
@@ -728,6 +768,13 @@ export class VirtualDS3231 implements I2CDevice {
 
   stop(): void {
     this.firstByte = true;
+  }
+
+  /** Snapshot the current register state (time + temperature). */
+  dumpRegisters(): Uint8Array {
+    const buf = new Uint8Array(256);
+    for (let r = 0; r < 0x20; r++) buf[r] = this.readRegister(r);
+    return buf;
   }
 }
 

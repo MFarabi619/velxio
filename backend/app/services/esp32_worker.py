@@ -51,6 +51,7 @@ try:
         DS1307Slave  as _DS1307Slave,
         DS3231Slave  as _DS3231Slave,
         I2CWriteSink as _I2CWriteSink,
+        ProxySlave   as _ProxySlave,
     )
 except ImportError:
     # Fallback: direct import when running from backend/ directory as subprocess
@@ -67,6 +68,7 @@ except ImportError:
     _DS1307Slave  = _mod.DS1307Slave   # type: ignore[assignment]
     _DS3231Slave  = _mod.DS3231Slave   # type: ignore[assignment]
     _I2CWriteSink = _mod.I2CWriteSink  # type: ignore[assignment]
+    _ProxySlave   = _mod.ProxySlave    # type: ignore[assignment]
 
 # SPI slaves (Phase 1: SSD168x ePaper). Same fallback dance — when the worker
 # runs as a subprocess from backend/ the package import won't resolve.
@@ -1595,6 +1597,40 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     _epaper_slaves.pop(cid, None)
                     _epaper_state.pop(cid, None)
             _log(f'Sensor detached from GPIO {gpio}')
+
+        # ── Cross-board I2C proxy slave ──────────────────────────────────
+        # Installed by the frontend when an ESP32 board is wired across
+        # the I2C bus to a peer board (Uno, Pico, …) that owns a virtual
+        # device.  The frontend snapshots the device's register state and
+        # pushes it here; we install a ProxySlave at the address so the
+        # ESP32 firmware's Wire master reads succeed inside QEMU.
+        elif c == 'proxy_i2c_register':
+            i2c_addr = int(cmd.get('addr', 0)) & 0x7F
+            try:
+                regs = base64.b64decode(cmd.get('regs_b64', ''))
+            except Exception as exc:
+                _log(f'proxy_i2c_register: bad base64: {exc}')
+                regs = b''
+            _i2c_slaves[i2c_addr] = _ProxySlave(i2c_addr, regs)
+            _log(f'proxy_i2c registered at 0x{i2c_addr:02x} ({len(regs)} bytes)')
+
+        elif c == 'proxy_i2c_update':
+            i2c_addr = int(cmd.get('addr', 0)) & 0x7F
+            try:
+                regs = base64.b64decode(cmd.get('regs_b64', ''))
+            except Exception as exc:
+                _log(f'proxy_i2c_update: bad base64: {exc}')
+                regs = b''
+            slave = _i2c_slaves.get(i2c_addr)
+            if slave is not None and hasattr(slave, 'update_registers'):
+                slave.update_registers(regs)
+                _log(f'proxy_i2c updated at 0x{i2c_addr:02x} ({len(regs)} bytes)')
+
+        elif c == 'proxy_i2c_unregister':
+            i2c_addr = int(cmd.get('addr', 0)) & 0x7F
+            popped = _i2c_slaves.pop(i2c_addr, None)
+            if popped is not None:
+                _log(f'proxy_i2c unregistered at 0x{i2c_addr:02x}')
 
         # ── ESP32-CAM frame injection ────────────────────────────────────
         # Pushes a JPEG (or other format) into the QEMU OV2640 device's

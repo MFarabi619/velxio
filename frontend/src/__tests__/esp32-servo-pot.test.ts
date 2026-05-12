@@ -75,11 +75,12 @@ vi.mock('../simulation/PinManager', () => ({
   }),
 }));
 
-vi.mock('../simulation/I2CBusManager', () => ({
-  VirtualDS1307: vi.fn(function (this: any) {}),
-  VirtualTempSensor: vi.fn(function (this: any) {}),
-  I2CMemoryDevice: vi.fn(function (this: any) {}),
-}));
+vi.mock('../simulation/I2CBusManager', async () => {
+  const actual = await vi.importActual<typeof import('../simulation/I2CBusManager')>(
+    '../simulation/I2CBusManager',
+  );
+  return actual;
+});
 
 vi.mock('../store/useOscilloscopeStore', () => ({
   useOscilloscopeStore: {

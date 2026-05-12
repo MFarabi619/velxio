@@ -478,6 +478,44 @@ export class Esp32Bridge {
     this._send({ type: 'esp32_i2c_response', data: { addr, response } });
   }
 
+  // ── Cross-board I2C proxy ─────────────────────────────────────────────────
+  // The backend hosts a `ProxySlave` at each registered address that responds
+  // with the register dump pushed by the frontend.  Used when an ESP32 is
+  // wired to another board's I2C bus and that peer board owns a virtual
+  // device — the ESP32 firmware needs to read it synchronously inside QEMU,
+  // which a WebSocket round-trip per byte can't deliver.  The proxy snapshot
+  // is good enough for chip-id reads, calibration constants, and any device
+  // whose state changes slowly relative to the ESP32 firmware's poll cadence.
+
+  /**
+   * Install a proxy I2C slave at `addr` initialised with the given register
+   * dump (up to 256 bytes).  Pushed lazily — buffered until WS opens.
+   */
+  registerProxyI2c(addr: number, registers: Uint8Array): void {
+    const regs_b64 = btoa(String.fromCharCode(...registers));
+    this._send({
+      type: 'esp32_proxy_i2c_register',
+      data: { addr: addr & 0x7f, regs_b64 },
+    });
+  }
+
+  /** Refresh the register state of an existing proxy slave at `addr`. */
+  updateProxyI2c(addr: number, registers: Uint8Array): void {
+    const regs_b64 = btoa(String.fromCharCode(...registers));
+    this._send({
+      type: 'esp32_proxy_i2c_update',
+      data: { addr: addr & 0x7f, regs_b64 },
+    });
+  }
+
+  /** Remove the proxy slave at `addr` (called on bridge teardown). */
+  unregisterProxyI2c(addr: number): void {
+    this._send({
+      type: 'esp32_proxy_i2c_unregister',
+      data: { addr: addr & 0x7f },
+    });
+  }
+
   /** Configure the MISO byte returned during an SPI transaction */
   setSpiResponse(response: number): void {
     this._send({ type: 'esp32_spi_response', data: { response } });

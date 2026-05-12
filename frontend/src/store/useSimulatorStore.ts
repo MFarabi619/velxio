@@ -5,7 +5,14 @@ import { Cyw43Bridge } from '../simulation/cyw43';
 import { RiscVSimulator } from '../simulation/RiscVSimulator';
 import { Esp32C3Simulator } from '../simulation/Esp32C3Simulator';
 import { PinManager } from '../simulation/PinManager';
-import { VirtualDS1307, VirtualTempSensor, I2CMemoryDevice } from '../simulation/I2CBusManager';
+import {
+  VirtualDS1307,
+  VirtualTempSensor,
+  I2CMemoryDevice,
+  I2CBusManager,
+  nullI2CMaster,
+} from '../simulation/I2CBusManager';
+import type { I2CDevice } from '../simulation/I2CBusManager';
 import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode } from '../types/board';
@@ -111,9 +118,26 @@ class Esp32BridgeShim {
   onBaudRateChange: ((baud: number) => void) | null = null;
   private bridge: Esp32Bridge;
 
+  /**
+   * Cross-board I2C surface — see AVRSimulator / RP2040Simulator for
+   * the canonical pattern.  ESP32 sketches run in backend QEMU, so the
+   * "primary" I2C path goes through the backend's libqemu-xtensa I2C
+   * slaves and reaches the frontend as `i2c_event` / `i2c_transaction`
+   * WebSocket messages.  But virtual devices attached to the ESP32
+   * board on the canvas also live frontend-side as I2CDevice instances
+   * — and Interconnect's bridge mechanism needs to reach them when a
+   * peer board's master tries to read across an SDA+SCL wire.  So we
+   * expose an I2CBusManager whose local devices mirror what
+   * ProtocolParts registers via `registerSensor`.  The peer-master
+   * direction works through this bus; the ESP32-master direction
+   * still flows through the backend (where the firmware runs).
+   */
+  private i2cBusInstance: I2CBusManager;
+
   constructor(bridge: Esp32Bridge, pm: PinManager) {
     this.bridge = bridge;
     this.pinManager = pm;
+    this.i2cBusInstance = new I2CBusManager(nullI2CMaster());
   }
 
   setPinState(pin: number, state: boolean): void {
@@ -264,6 +288,74 @@ class Esp32BridgeShim {
       this.bridge.onI2cTransaction = null;
     }
   }
+
+  // ── Cross-board I2C bus surface ─────────────────────────────────────────
+
+  /**
+   * Expose the I2CBusManager so Interconnect can install cross-board
+   * bridges and ProtocolParts can register frontend-side virtual
+   * devices.  ESP32 has 2 hardware I2C buses but we collapse them
+   * onto a single front-end bus for now — the bus index is ignored.
+   * Splitting per-bus would require teaching the backend to tag
+   * `i2c_event` payloads with the originating bus number, which
+   * the lib worker already does (`bus` field) but the frontend
+   * shim doesn't yet route on.
+   */
+  getI2CBus(_bus: 0 | 1 = 0): I2CBusManager {
+    return this.i2cBusInstance;
+  }
+
+  /**
+   * Register a frontend-side virtual I2C device.  This mirrors the
+   * backend's QEMU-side slave (kept in sync via `registerSensor` /
+   * `updateSensor`) so peer boards reading across the I2C bridge
+   * find the device.  ProtocolParts calls this on the ESP32 path
+   * alongside the existing `registerSensor` + `addI2CTransactionListener`.
+   */
+  addI2CDevice(device: I2CDevice, _bus: 0 | 1 = 0): void {
+    this.i2cBusInstance.addDevice(device);
+  }
+
+  /** Remove a previously-registered virtual device. */
+  removeI2CDevice(addr: number, _bus: 0 | 1 = 0): void {
+    this.i2cBusInstance.removeDevice(addr);
+  }
+
+  /**
+   * Push register snapshots of a peer board's I2C devices into a
+   * backend `ProxySlave` per address.  Called by Interconnect after a
+   * cross-board I2C bridge is installed so the ESP32 firmware's Wire
+   * master reads can find the peer's devices inside QEMU.
+   *
+   * The `peerBus` argument is the I2CBusManager of the other board;
+   * we snapshot each registered device with `dumpRegisters()` and
+   * forward the bytes via the WebSocket protocol.  Devices that don't
+   * expose a register dump (write-only sinks like SSD1306, PCF8574,
+   * LCD-I2C) are skipped — peer-master writes to those still work via
+   * the regular I2CBusManager.handleExternalWrite path because the
+   * device lives on the master's local bus too.
+   */
+  syncProxyFromPeer(peerBus: I2CBusManager): void {
+    if (typeof peerBus.listDevices !== 'function') return;
+    for (const device of peerBus.listDevices()) {
+      if (typeof device.dumpRegisters !== 'function') continue;
+      try {
+        const regs = device.dumpRegisters();
+        this.bridge.registerProxyI2c(device.address, regs);
+        this._proxiedAddrs.add(device.address);
+      } catch (e) {
+        console.warn(`[Esp32BridgeShim] syncProxyFromPeer dump failed for 0x${device.address.toString(16)}`, e);
+      }
+    }
+  }
+
+  /** Tear down every proxy slave we previously installed. */
+  clearAllProxies(): void {
+    for (const addr of this._proxiedAddrs) this.bridge.unregisterProxyI2c(addr);
+    this._proxiedAddrs.clear();
+  }
+
+  private _proxiedAddrs = new Set<number>();
 }
 
 // ── Shared LEDC update handler (used by addBoard, setBoardType, initSimulator) ─
