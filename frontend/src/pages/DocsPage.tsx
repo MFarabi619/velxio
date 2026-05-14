@@ -35,7 +35,8 @@ type SectionId =
   | 'architecture'
   | 'third-party'
   | 'mcp'
-  | 'setup';
+  | 'setup'
+  | 'build-qemu';
 
 const VALID_SECTIONS: SectionId[] = [
   'intro',
@@ -51,6 +52,7 @@ const VALID_SECTIONS: SectionId[] = [
   'third-party',
   'mcp',
   'setup',
+  'build-qemu',
 ];
 
 interface NavItem {
@@ -71,6 +73,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'third-party', labelKey: 'docs.nav.thirdParty' },
   { id: 'mcp', labelKey: 'docs.nav.mcp' },
   { id: 'setup', labelKey: 'docs.nav.setup' },
+  { id: 'build-qemu', labelKey: 'docs.nav.buildQemu' },
   { id: 'roadmap', labelKey: 'docs.nav.roadmap' },
 ];
 
@@ -131,6 +134,10 @@ const SECTION_META: Record<SectionId, SectionMeta> = {
   'raspberry-pi3-emulation': {
     titleKey: 'docs.sectionMeta.raspberryPi3Emulation.title',
     descriptionKey: 'docs.sectionMeta.raspberryPi3Emulation.description',
+  },
+  'build-qemu': {
+    titleKey: 'docs.sectionMeta.buildQemu.title',
+    descriptionKey: 'docs.sectionMeta.buildQemu.description',
   },
 };
 
@@ -2509,6 +2516,123 @@ const RaspberryPi3EmulationSection: React.FC = () => {
   );
 };
 
+/* ── Build QEMU from source ───────────────────────────── */
+//
+// Transparency section. The Velxio docker image ships with prebuilt
+// libqemu-xtensa / libqemu-riscv32 — anyone who'd rather not run
+// third-party binaries can rebuild them from lcgamboa/qemu and drop
+// them in. Body copy is intentionally hardcoded English: the value
+// here is technical clarity and a clean link to the canonical
+// docs/BUILD-QEMU.md, not a localised marketing surface.
+const BuildQemuSection: React.FC = () => {
+  return (
+    <div className="docs-section">
+      <span className="docs-label">Self-hosting</span>
+      <h1>Build QEMU libraries from source</h1>
+      <p>
+        Velxio ships with prebuilt <code>libqemu-xtensa.so</code> and{' '}
+        <code>libqemu-riscv32.so</code> so ESP32 / ESP32-S3 / ESP32-C3
+        simulation works the moment you pull the docker image. The
+        prebuilts are a convenience — Velxio is <strong>AGPLv3</strong>{' '}
+        and so is the QEMU fork it depends on, which means you can
+        always rebuild the libraries yourself from source and run
+        those instead.
+      </p>
+
+      <h2>Why you might want to</h2>
+      <ul>
+        <li>
+          <strong>Audit the supply chain.</strong> Regulated deployments
+          often require that every shared object on the box was built
+          from a known-good source tree.
+        </li>
+        <li>
+          <strong>Patch QEMU.</strong> Add a peripheral the upstream
+          fork doesn't emulate, or backport a fix from mainline QEMU.
+        </li>
+        <li>
+          <strong>You're on an unusual platform.</strong> We currently
+          publish Linux x86_64, Linux ARM64, macOS ARM64 and Windows
+          x86_64. BSDs, exotic libc, macOS Intel — build your own.
+        </li>
+        <li>
+          <strong>Trust nothing.</strong> A valid reason. Drop our
+          binaries, rebuild from sources you've audited, and the
+          chain is your tree only.
+        </li>
+      </ul>
+
+      <h2>The short version</h2>
+      <p>
+        On a Linux box with a working C toolchain:
+      </p>
+      <pre><code>{`git clone https://github.com/lcgamboa/qemu.git
+cd qemu
+
+# ESP32 (Xtensa)
+mkdir build-xtensa && cd build-xtensa
+../configure --target-list=xtensa-softmmu --enable-shared-lib \\
+             --disable-werror --disable-tools --disable-docs
+ninja
+# → produces libqemu-xtensa.so (~46 MB)
+cd ..
+
+# ESP32-C3 (RISC-V)
+mkdir build-riscv32 && cd build-riscv32
+../configure --target-list=riscv32-softmmu --enable-shared-lib \\
+             --disable-werror --disable-tools --disable-docs
+ninja
+# → produces libqemu-riscv32.so (~45 MB)`}</code></pre>
+
+      <p>
+        Drop both <code>.so</code> files into <code>/app/lib/</code>{' '}
+        inside the running Velxio container (or whatever host path you
+        bind-mount to it) and restart. The backend dlopens whichever
+        library is on disk on the next simulation start, so this
+        replaces the shipped binaries cleanly.
+      </p>
+
+      <h2>The full guide</h2>
+      <p>
+        Step-by-step build instructions, dependency lists per OS
+        (Debian / Arch / macOS), the canonical commit ID we anchor the
+        prebuilts to, troubleshooting for the common configure / ninja
+        failures, and the licensing notes (QEMU is GPL-2.0, Velxio is
+        AGPLv3, the dlopen boundary keeps them orthogonal) live in the
+        full document:
+      </p>
+      <p>
+        <a
+          href="https://github.com/davidmonterocrespo24/velxio/blob/master/docs/BUILD-QEMU.md"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Read <code>docs/BUILD-QEMU.md</code> on GitHub →
+        </a>
+      </p>
+
+      <h2>Or use the prebuilts</h2>
+      <p>
+        If you don't have a 15-30 minute build in you, the
+        sha256-pinned prebuilts are available at{' '}
+        <a
+          href="https://velxio.dev/license/signup"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          velxio.dev/license/signup
+        </a>{' '}
+        (free personal-use key, takes a minute), and the existing
+        public release at <code>github.com/davidmonterocrespo24/velxio
+        /releases/tag/qemu-prebuilt</code> still serves the same files
+        byte-for-byte. Both produce identical libraries to what this
+        guide builds — there's no "blessed" version, just convenience
+        choices.
+      </p>
+    </div>
+  );
+};
+
 const SECTION_MAP: Record<SectionId, React.FC> = {
   intro: IntroSection,
   'getting-started': GettingStartedSection,
@@ -2523,6 +2647,7 @@ const SECTION_MAP: Record<SectionId, React.FC> = {
   'third-party': WokwiLibsSection,
   mcp: McpSection,
   setup: SetupSection,
+  'build-qemu': BuildQemuSection,
 };
 
 /* ── Page ─────────────────────────────────────────────── */

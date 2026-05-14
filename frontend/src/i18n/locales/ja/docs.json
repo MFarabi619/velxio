@@ -148,6 +148,10 @@
       "raspberryPi3Emulation": {
         "title": "Raspberry Pi 3エミュレーション（QEMU） | Velxio ドキュメント",
         "description": "VelxioがQEMU raspi3bを使用して完全なRaspberry Pi 3Bをエミュレートする方法：実際のRaspberry Pi OS、Python + RPi.GPIOシム、デュアルチャンネルUART、VFS、マルチボードシリアルブリッジ。"
+      },
+      "buildQemu": {
+        "title": "QEMUをソースからビルド | Velxioドキュメント",
+        "description": "lcgamboa/qemu フォークから libqemu-xtensa と libqemu-riscv32 をコンパイルするステップバイステップガイド。AGPLv3 ライセンスの下、完全な透明性を提供します。"
       }
     },
     "rp2040": {

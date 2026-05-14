@@ -369,7 +369,8 @@
       "thirdParty": "Wokwi Libraries",
       "mcp": "MCP Server",
       "setup": "Project Status",
-      "roadmap": "Roadmap"
+      "roadmap": "Roadmap",
+      "buildQemu": "Build QEMU from source"
     }
   }
 }

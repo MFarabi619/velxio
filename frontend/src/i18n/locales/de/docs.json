@@ -148,6 +148,10 @@
       "raspberryPi3Emulation": {
         "title": "Raspberry Pi 3-Emulation (QEMU) | Velxio-Dokumentation",
         "description": "Wie Velxio einen vollständigen Raspberry Pi 3B mit QEMU raspi3b emuliert: echtes Raspberry Pi OS, Python + RPi.GPIO-Shim, zweikanaliger UART, VFS und Multi-Board-Serienbrücke."
+      },
+      "buildQemu": {
+        "title": "QEMU aus dem Quellcode bauen | Velxio-Dokumentation",
+        "description": "Schritt-für-Schritt-Anleitung zum Kompilieren von libqemu-xtensa und libqemu-riscv32 aus dem lcgamboa/qemu-Fork. Volle Transparenz unter AGPLv3."
       }
     },
     "rp2040": {

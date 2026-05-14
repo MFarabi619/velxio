@@ -148,6 +148,10 @@
       "raspberryPi3Emulation": {
         "title": "Raspberry Pi 3 仿真 (QEMU) | Velxio 文档",
         "description": "Velxio 如何使用 QEMU raspi3b 仿真完整的 Raspberry Pi 3B：真实的 Raspberry Pi OS、Python + RPi.GPIO 垫片、双通道 UART、VFS 和多板串行桥。"
+      },
+      "buildQemu": {
+        "title": "从源码构建 QEMU | Velxio 文档",
+        "description": "从 lcgamboa/qemu 分支编译 libqemu-xtensa 和 libqemu-riscv32 的逐步指南。AGPLv3 许可下的完全透明。"
       }
     },
     "rp2040": {

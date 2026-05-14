@@ -369,7 +369,8 @@
       "thirdParty": "Wokwiライブラリ",
       "mcp": "MCPサーバー",
       "setup": "プロジェクトステータス",
-      "roadmap": "ロードマップ"
+      "roadmap": "ロードマップ",
+      "buildQemu": "QEMUをソースからビルド"
     }
   }
 }

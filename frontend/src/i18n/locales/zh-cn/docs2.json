@@ -369,7 +369,8 @@
       "thirdParty": "Wokwi 库",
       "mcp": "MCP 服务器",
       "setup": "项目状态",
-      "roadmap": "路线图"
+      "roadmap": "路线图",
+      "buildQemu": "从源码构建 QEMU"
     }
   }
 }

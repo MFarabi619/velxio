@@ -369,7 +369,8 @@
       "thirdParty": "Librerías Wokwi",
       "mcp": "Servidor MCP",
       "setup": "Estado del proyecto",
-      "roadmap": "Hoja de ruta"
+      "roadmap": "Hoja de ruta",
+      "buildQemu": "Compilar QEMU"
     }
   }
 }
