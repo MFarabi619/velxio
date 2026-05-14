@@ -251,11 +251,10 @@ docker run -d \
   --name velxio \
   -p 3080:80 \
   -v $(pwd)/data:/app/data \
-  -e SECRET_KEY=your-secret \
   ghcr.io/davidmonterocrespo24/velxio:master
 ```
 
-ESP32 emulation with full GPIO is active automatically. No additional environment variables are needed.
+ESP32 emulation with full GPIO is active automatically. No environment variables are needed (the OSS image is stateless — no auth, no DB).
 
 ### 2.2 Local Image Build
 
@@ -263,7 +262,7 @@ ESP32 emulation with full GPIO is active automatically. No additional environmen
 git clone https://github.com/davidmonterocrespo24/velxio.git
 cd velxio
 docker build -f Dockerfile.standalone -t velxio .
-docker run -d -p 3080:80 -e SECRET_KEY=secret velxio
+docker run -d -p 3080:80 velxio
 ```
 
 > **Build time note:** QEMU compilation takes 15-30 minutes the first time.
@@ -1108,7 +1107,7 @@ The connection logic lives in `SimulatorCanvas.tsx`: it detects the tag of the w
 
 ```bash
 # Docker — fully automatic, no extra variables needed:
-docker run -d -p 3080:80 -e SECRET_KEY=secret ghcr.io/davidmonterocrespo24/velxio:master
+docker run -d -p 3080:80 ghcr.io/davidmonterocrespo24/velxio:master
 
 # Windows with lib (full emulation: GPIO + WiFi + ADC + I2C + SPI + RMT + LEDC):
 cd backend && venv\Scripts\activate

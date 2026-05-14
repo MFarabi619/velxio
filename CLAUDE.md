@@ -10,8 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Backend: FastAPI + Python for Arduino code compilation via arduino-cli
 - Simulation: Real AVR8 emulation using avr8js with full GPIO/timer/USART support
 - Components: Visual electronic components from wokwi-elements (LEDs, resistors, buttons, etc.)
-- Auth: Email/password + Google OAuth, JWT in httpOnly cookies
-- Project persistence: SQLite via SQLAlchemy 2.0 async + aiosqlite
+- Auth: None — OSS is single-user anonymous. Accounts + OAuth live in the
+  velxio-prod private overlay that powers velxio.dev.
+- Project persistence: `.vlx` file export/import (`utils/vlxFile.ts`) —
+  zero server-side state. Server-side persistence (SQLite or Postgres
+  via SQLAlchemy) lives in the velxio-prod overlay.
 
 The project uses **local clones of official Wokwi repositories** in `third-party/` instead of npm packages.
 
@@ -167,8 +170,8 @@ The simulation runs at ~60 FPS using `requestAnimationFrame`:
 Main stores:
 - `useEditorStore`: Multi-file workspace (files[], activeFileId, openFileIds)
 - `useSimulatorStore`: Simulation state, components, wires, compiled hex, serialMonitorOpen
-- `useAuthStore`: Auth state (persisted in localStorage)
-- `useProjectStore`: Current project tracking
+- `useProjectStore`: Current loaded project metadata (id, slug, name) — used by the `.vlx` exporter to pick a download filename
+- `useAuthStore` (overlay-only) lives in `pro/frontend/src/pro/store/` in the velxio-prod repo. Pure OSS builds do not include it.
 
 **6. Component-Pin Mapping**
 
@@ -193,25 +196,35 @@ Wire positions auto-update when components move via `updateWirePositions()`.
 
 ## Key File Locations
 
-### Backend
-- [backend/app/main.py](backend/app/main.py) - FastAPI app entry point, CORS config, model imports
-- [backend/app/api/routes/compile.py](backend/app/api/routes/compile.py) - Compilation endpoints (multi-file)
-- [backend/app/api/routes/auth.py](backend/app/api/routes/auth.py) - /api/auth/* endpoints
-- [backend/app/api/routes/projects.py](backend/app/api/routes/projects.py) - /api/projects/* + /api/user/*
+### Backend (OSS — stateless)
+- [backend/app/main.py](backend/app/main.py) - FastAPI app entry point, CORS, lifespan hooks
+- [backend/app/api/routes/compile.py](backend/app/api/routes/compile.py) - Compilation endpoints (multi-file, sync + async)
+- [backend/app/api/routes/compile_chip.py](backend/app/api/routes/compile_chip.py) - Custom-chip WASM compile
+- [backend/app/api/routes/libraries.py](backend/app/api/routes/libraries.py) - arduino-cli library search/install proxy
+- [backend/app/api/routes/simulation.py](backend/app/api/routes/simulation.py) - WebSocket bridge to QEMU workers
+- [backend/app/api/routes/iot_gateway.py](backend/app/api/routes/iot_gateway.py) - HTTP proxy for ESP32 web servers
 - [backend/app/services/arduino_cli.py](backend/app/services/arduino_cli.py) - arduino-cli wrapper
-- [backend/app/core/config.py](backend/app/core/config.py) - Settings (SECRET_KEY, DATABASE_URL `velxio.db`, GOOGLE_*)
-- [backend/app/core/security.py](backend/app/core/security.py) - JWT, password hashing
-- [backend/app/core/dependencies.py](backend/app/core/dependencies.py) - get_current_user, require_auth
-- [backend/app/database/session.py](backend/app/database/session.py) - async SQLAlchemy engine
-- [backend/app/models/user.py](backend/app/models/user.py) - User model
-- [backend/app/models/project.py](backend/app/models/project.py) - Project model (UniqueConstraint user_id+slug)
+- [backend/app/services/espidf_compiler.py](backend/app/services/espidf_compiler.py) - ESP-IDF compile wrapper
+- [backend/app/core/config.py](backend/app/core/config.py) - Minimal Settings (FRONTEND_URL only)
+- [backend/app/core/hooks.py](backend/app/core/hooks.py) - Extension hooks (record_compile, get_current_user_id, lifespan_startup) that the velxio-prod overlay fills in. OSS-default = no-op.
+
+**Removed in the OSS/pro split (Phase 1-4):** auth.py, projects.py,
+admin.py, metrics.py, models/*, schemas/*, services/metrics.py,
+services/odoo_mail.py, services/project_files.py, database/session.py,
+core/dependencies.py, core/security.py, utils/{geo,slug,boards}.py. All
+of these live in [velxio-prod](https://github.com/velxio/velxio-prod)'s
+private overlay and are COPYed onto the image at Docker build time when
+deploying velxio.dev.
 
 ### Frontend - Core
-- [frontend/src/App.tsx](frontend/src/App.tsx) - Main app component, routing
+- [frontend/src/App.tsx](frontend/src/App.tsx) - Main app component, routing (with overlay route injection via `useProRoutes`)
+- [frontend/src/lib/proRoutes.ts](frontend/src/lib/proRoutes.ts) - Registry for routes the overlay registers at runtime
+- [frontend/src/lib/proSession.ts](frontend/src/lib/proSession.ts) - Optional session-check hook installed by the overlay
+- [frontend/src/lib/proSaveAction.ts](frontend/src/lib/proSaveAction.ts) - Save-button registry. Default = download `.vlx`; overlay overrides with SaveProjectModal.
+- [frontend/src/utils/vlxFile.ts](frontend/src/utils/vlxFile.ts) - Portable project export/import (no server needed)
 - [frontend/src/store/useEditorStore.ts](frontend/src/store/useEditorStore.ts) - Multi-file workspace state
 - [frontend/src/store/useSimulatorStore.ts](frontend/src/store/useSimulatorStore.ts) - Simulation state, components, wires
-- [frontend/src/store/useAuthStore.ts](frontend/src/store/useAuthStore.ts) - Auth state (localStorage)
-- [frontend/src/store/useProjectStore.ts](frontend/src/store/useProjectStore.ts) - Current project
+- [frontend/src/store/useProjectStore.ts](frontend/src/store/useProjectStore.ts) - Current loaded project metadata
 
 ### Frontend - Editor UI
 - [frontend/src/components/editor/CodeEditor.tsx](frontend/src/components/editor/CodeEditor.tsx) - Monaco editor (key={activeFileId} for per-file undo history)
@@ -409,9 +422,6 @@ metadata staleness check), not the other two.
 
 ### 9. Backend Gotchas
 
-- **bcrypt**: Pin `bcrypt==4.0.1` — bcrypt 5.x breaks passlib 1.7.4
-- **email-validator**: Must be installed separately (`pip install email-validator`)
-- **Model imports**: Both `app.models.user` and `app.models.project` must be imported before DB init (done in `main.py`)
 - **RP2040 board manager**: arduino-cli needs the earlephilhower URL before `rp2040:rp2040` install:
   ```
   arduino-cli config add board_manager.additional_urls \
@@ -486,11 +496,10 @@ Enable verbose logging:
 - ILI9341 TFT display simulation
 - Library Manager (install/search arduino libraries)
 - Example projects gallery
-- **Auth**: email/password + Google OAuth, JWT httpOnly cookies
-- **Project persistence**: create/read/update/delete with URL slugs (`/:username/:slug`)
-- **User profile page** at `/:username`
+- **Portable project persistence**: `.vlx` file export/import — single-file JSON snapshot of the whole workspace, no server, no DB
 - **Resizable file explorer** panel (drag handle, collapse toggle)
 - Docker standalone image published to GHCR + Docker Hub
+- **OSS / pro split**: auth, accounts, public profiles, admin panel, server-side project URLs and analytics live in the private [velxio-prod](https://github.com/velxio/velxio-prod) overlay that runs velxio.dev. OSS is single-user, anonymous, fully self-hostable.
 
 **In Progress:**
 - Functional wire connections (electrical signal routing)

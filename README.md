@@ -237,13 +237,19 @@ See [docs/RASPBERRYPI3_EMULATION.md](docs/RASPBERRYPI3_EMULATION.md) for full te
 - Browse and install the full Arduino library index directly from the UI
 - Live search, installed tab, version display
 
-### Auth & Project Persistence
+### Portable Project Persistence
 
-- **Email/password** and **Google OAuth** sign-in
-- **Project save** with name, description, and public/private visibility
-- **Project URL** — each project gets a permanent URL at `/project/:id`
-- **Sketch files stored on disk** per project (accessible from the host via Docker volume)
-- **User profile** at `/:username` showing public projects
+- **`.vlx` file format** — single-file JSON snapshot of the whole
+  workspace (boards, file groups, components, wires). Download with the
+  Save button, restore with the Open `.vlx` button. The format is
+  versioned so files round-trip cleanly across versions.
+- **Zero server-side state** — OSS Velxio has no database, no accounts,
+  no login. Your projects live wherever you keep your `.vlx` files
+  (local disk, Dropbox, GitHub, Google Drive — your choice).
+- Need accounts, public profiles at `/:username`, server-side project
+  URLs and admin panels? Those live in the private overlay used to run
+  velxio.dev — see [velxio-prod](https://github.com/velxio/velxio-prod)
+  for the open-core split details.
 
 ### Example Projects
 
@@ -329,20 +335,13 @@ required** to get going.
 
 #### Optional: customize environment
 
-Create `backend/.env` (copy from `backend/.env.example`) only when you need
-OAuth, a fixed `SECRET_KEY`, or HTTPS-only cookies. The compose file picks
-it up automatically if it exists.
+The OSS image has almost no configuration — there's no database, no auth,
+no third-party integrations. Create `backend/.env` only if you want to
+change the CORS origin used during local development.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SECRET_KEY` | *(auto-generated)* | JWT signing secret. If unset the entrypoint creates one and saves it under `data/.secret_key`. |
-| `DATABASE_URL` | `sqlite+aiosqlite:////app/data/velxio.db` | SQLite path |
-| `DATA_DIR` | `/app/data` | Directory for project files |
-| `FRONTEND_URL` | `http://localhost:5173` | Used for OAuth redirect |
-| `GOOGLE_CLIENT_ID` | — | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
-| `GOOGLE_REDIRECT_URI` | `http://localhost:8001/api/auth/google/callback` | Must match Google Console |
-| `COOKIE_SECURE` | `false` | Set `true` when serving over HTTPS |
+| `FRONTEND_URL` | `http://localhost:5173` | Origin allowed by CORS for local Vite dev |
 
 > **Deploying behind a reverse proxy?** The container listens on plain HTTP
 > on port 80 and accepts any `Host` header — no `server_name` whitelist.
@@ -451,16 +450,16 @@ velxio/
 | Layer | Stack |
 | --- | --- |
 | Frontend | React 19, Vite 7, TypeScript 5.9, Monaco Editor, Zustand, React Router 7 |
-| Backend | FastAPI, SQLAlchemy 2.0 async, aiosqlite, uvicorn |
+| Backend | FastAPI, uvicorn (stateless: compile, libraries, simulation, MCP) |
 | AVR Simulation | avr8js (ATmega328p / ATmega2560) |
 | RP2040 Simulation | rp2040js (ARM Cortex-M0+) |
 | RISC-V Simulation | RiscVCore.ts (RV32IMC, custom TypeScript) |
 | ESP32 Simulation | QEMU 8.1.3 lcgamboa fork (Xtensa LX6/LX7) |
 | Raspberry Pi 3 Simulation | QEMU 8.1.3 (`qemu-system-aarch64 -M raspi3b`) + Raspberry Pi OS Trixie |
 | UI Components | wokwi-elements (Web Components) |
-| Compiler | arduino-cli (subprocess) |
-| Auth | JWT (httpOnly cookie), Google OAuth 2.0 |
-| Persistence | SQLite + disk volume (`/app/data/projects/{id}/`) |
+| Compiler | arduino-cli (subprocess) + ESP-IDF (subprocess) |
+| Auth | None — anonymous, single-user editor by design |
+| Persistence | `.vlx` file export/import (no server-side database) |
 | Deploy | Docker, nginx, GitHub Actions → GHCR + Docker Hub |
 
 ---
