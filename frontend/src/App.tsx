@@ -88,6 +88,10 @@ function App() {
 
   useEffect(() => {
     checkSession();
+    // #root-seo is a static SEO fallback in index.html (position:absolute,
+    // visibility:hidden). It still contributes to document scrollHeight, so
+    // every page got a phantom scroll the size of the prerendered SEO body.
+    document.getElementById('root-seo')?.remove();
   }, []);
 
   return (
