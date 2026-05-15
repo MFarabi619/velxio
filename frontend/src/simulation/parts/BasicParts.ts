@@ -293,17 +293,33 @@ PartSimulationRegistry.register('led', {
  * Wokwi pin names: A1-A10
  */
 PartSimulationRegistry.register('led-bar-graph', {
-  attachEvents: (element, avrSimulator, getArduinoPinHelper) => {
+  attachEvents: (element, avrSimulator, getArduinoPinHelper, _componentId, getPinResolver) => {
     const pinManager = (avrSimulator as any).pinManager;
     if (!pinManager) return () => {};
+
+    // Phase 5 migration: prefer the resolver so each anode pin works
+    // through SPICE-resolved thresholds when fed from an active device.
+    const useResolver = typeof getPinResolver === 'function';
 
     const values = new Array(10).fill(0);
     const unsubscribers: (() => void)[] = [];
 
     for (let i = 1; i <= 10; i++) {
-      const pin = getArduinoPinHelper(`A${i}`);
-      if (pin !== null) {
-        const idx = i - 1;
+      const idx = i - 1;
+      const pinName = `A${i}`;
+      if (useResolver) {
+        const resolver = getPinResolver!(pinName);
+        if (!resolver) continue;
+        values[idx] = resolver.getCurrentState() === 'HIGH' ? 1 : 0;
+        unsubscribers.push(
+          resolver.onChange((state) => {
+            values[idx] = state === 'HIGH' ? 1 : 0;
+            (element as any).values = [...values];
+          }),
+        );
+      } else {
+        const pin = getArduinoPinHelper(pinName);
+        if (pin === null) continue;
         unsubscribers.push(
           pinManager.onPinChange(pin, (_p: number, state: boolean) => {
             values[idx] = state ? 1 : 0;
@@ -312,6 +328,7 @@ PartSimulationRegistry.register('led-bar-graph', {
         );
       }
     }
+    (element as any).values = [...values];
 
     return () => unsubscribers.forEach((u) => u());
   },
