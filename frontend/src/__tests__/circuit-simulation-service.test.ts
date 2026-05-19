@@ -20,7 +20,26 @@ import {
 } from '../simulation/spice/MixedModeScheduler';
 import { FakeSolverAdapter } from '../simulation/spice/adapters/FakeSolverAdapter';
 
+// Tracks unsubscribe handles returned by `service.start()` so the
+// store subscription is released after every test. Without this, the
+// listener pins the simStore (and via closure the service + scheduler)
+// in memory, and vitest's forks pool can't terminate cleanly when the
+// suite finishes — manifesting as "Worker exited unexpectedly /
+// Timeout terminating forks worker" on CI. The hang doesn't surface
+// any failed assertion; everything passes, but the worker process
+// never exits.
+const _activeUnsubs: Array<() => void> = [];
+
+function startTracked(service: { start: () => () => void }): () => void {
+  const unsub = service.start();
+  _activeUnsubs.push(unsub);
+  return unsub;
+}
+
 afterEach(() => {
+  for (const unsub of _activeUnsubs.splice(0)) {
+    try { unsub(); } catch { /* ignore */ }
+  }
   __resetMixedModeScheduler();
 });
 
@@ -98,7 +117,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({ '5V': { type: 'digital', v: 5 } }) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 20));
 
     expect(fake.calls.loadCircuit.length).toBe(1);
@@ -121,7 +140,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({ '5V': { type: 'digital', v: 5 } }) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 20));
 
     const snap = elec.snapshots[0];
@@ -139,7 +158,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({ '5V': { type: 'digital', v: 5 } }) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 10));
     expect(fake.calls.solve.length).toBe(1);
 
@@ -159,7 +178,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 10));
     sim.set({}); // same arrays — should NOT trigger a re-solve
     await new Promise((r) => setTimeout(r, 10));
@@ -180,7 +199,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     // While initial solve runs, fire 3 store changes — should coalesce
     // into 1 trailing solve.
     sim.set({ components: [{ id: 'a', metadataId: 'resistor', properties: {} }] });
@@ -218,7 +237,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 20));
 
     const snap = elec.snapshots[0];
@@ -241,7 +260,7 @@ describe('CircuitSimulationService — orchestration', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 10));
     // The FakeSolverAdapter returns empty warnings, so the snapshot
     // also has empty warnings — but the field exists.
@@ -294,7 +313,7 @@ describe('handleMcuEdge (Phase 1c D1)', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 20));
     const initialSolves = fake.calls.solve.length;
     const initialSnapshots = elec.snapshots.length;
@@ -323,7 +342,7 @@ describe('handleMcuEdge (Phase 1c D1)', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     // While initial solve is running, fire an edge.
     void service.handleMcuEdge('uno', '9', true, 5);
     await new Promise((r) => setTimeout(r, 100));
@@ -371,7 +390,7 @@ describe('CircuitSimulationService — error handling', () => {
       getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
       { collectBoardPinStates: () => ({}) },
     );
-    service.start();
+    startTracked(service);
     await new Promise((r) => setTimeout(r, 10));
     expect(warn).toHaveBeenCalled();
     expect(elec.snapshots.length).toBe(0); // no publish on failure
