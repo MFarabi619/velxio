@@ -26,6 +26,55 @@ import i8080CounterC   from '../components/customChips/examples/intel/i8080-coun
 import i8080CounterJ   from '../components/customChips/examples/intel/i8080-counter.chip.json?raw';
 import i8080CpuC       from '../components/customChips/examples/intel/i8080-cpu.c?raw';
 import i8080CpuJ       from '../components/customChips/examples/intel/i8080-cpu.chip.json?raw';
+import z80CpuC         from '../components/customChips/examples/intel/z80-cpu.c?raw';
+import z80CpuJ         from '../components/customChips/examples/intel/z80-cpu.chip.json?raw';
+
+const larsonZ80Asm = `; Larson Scanner / Knight Rider in Z80 assembly.
+;
+; A single LED walks left across 8 LEDs forever. Uses JR/DJNZ/RLCA --
+; Z80 instructions the 8080 emulator can't run. The pattern wraps from
+; bit 7 back to bit 0 thanks to RLCA's circular rotation.
+
+        ORG 0x0000
+
+        LD   SP, 0xBFFF        ; stack at top of RAM
+        LD   A, 0x01           ; A = bit pattern (start at LED0)
+
+loop:
+        LD   (0xC000), A       ; write to LED port
+        PUSH AF
+        CALL delay
+        POP  AF
+        RLCA                   ; rotate left (bit 7 -> bit 0)
+        JR   loop
+
+; -- delay: ~80 ms outer loop -------------------------------------------
+delay:
+        LD   C, 80
+outer:
+        LD   B, 0              ; 0 = 256 inner iterations
+inner:
+        DJNZ inner
+        DEC  C
+        JR   NZ, outer
+        RET
+`;
+
+const larsonZ80Sketch = `// Z80 Larson Scanner -- Arduino Uno companion sketch.
+//
+// The Z80 chip on the canvas runs the larson.s program. This Arduino
+// sketch just keeps Serial alive in case you wire UART later.
+//
+// Steps:
+//   1. Open larson.s and click Compile.
+//   2. Click Run. A bit will walk across the 8 LEDs.
+//
+// To slow it down or speed it up: change the "LD C, 80" line in larson.s
+// (higher number = slower).
+
+void setup() {}
+void loop() {}
+`;
 
 const killbitsAsm = `; Kill the Bit -- Dean McDaniel, May 15, 1975. Public domain.
 ;
@@ -368,6 +417,74 @@ export const retroIntelExamples: ExampleProject[] = [
       {
         id: 'wire-cpu-gnd',
         start: { componentId: 'i8080cpu', pinName: 'GND' },
+        end: { componentId: 'arduino-uno', pinName: 'GND' },
+        color: '#000000',
+      },
+    ],
+  },
+
+  // ── Z80 Larson Scanner — first example on the programmable z80-cpu ──
+  {
+    id: 'z80-larson-scanner',
+    title: 'Z80 Larson Scanner',
+    description:
+      'A single LED walks left across 8 LEDs, Knight-Rider style. Z80 program lives in larson.s ' +
+      '(JR + DJNZ + RLCA — instructions the 8080 emulator can\'t run). Click Compile, then Run.',
+    category: 'circuits',
+    difficulty: 'intermediate',
+    boardType: 'arduino-uno',
+    tags: ['retro', 'z80', 'zilog', 'cpu', 'leds', 'larson', 'knight-rider', 'wasm', 'custom-chip', 'asm', 'programmable'],
+    code: larsonZ80Sketch,
+    files: [
+      { name: 'sketch.ino', content: larsonZ80Sketch },
+      { name: 'larson.s',   content: larsonZ80Asm },
+    ],
+    components: [
+      {
+        type: 'custom-chip',
+        id: 'z80cpu',
+        x: 380,
+        y: 120,
+        properties: {
+          chipName: 'Z80 CPU (programmable)',
+          sourceC: z80CpuC,
+          chipJson: z80CpuJ,
+          wasmBase64: '',
+          romBytes: '',
+          programFile: 'larson.s',
+          programTarget: 'z80',
+        },
+      },
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        type: 'wokwi-led',
+        id: `led-${i}`,
+        x: 700 + i * 50,
+        y: 120,
+        properties: { color: i % 2 === 0 ? 'red' : 'orange' },
+      })),
+    ],
+    wires: [
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        id: `wire-led-${i}`,
+        start: { componentId: 'z80cpu', pinName: `LED${i}` },
+        end: { componentId: `led-${i}`, pinName: 'A' },
+        color: '#ef4444',
+      })),
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        id: `wire-led-${i}-gnd`,
+        start: { componentId: `led-${i}`, pinName: 'C' },
+        end: { componentId: 'arduino-uno', pinName: 'GND' },
+        color: '#000000',
+      })),
+      {
+        id: 'wire-z80-vcc',
+        start: { componentId: 'z80cpu', pinName: 'VCC' },
+        end: { componentId: 'arduino-uno', pinName: '5V' },
+        color: '#e74c3c',
+      },
+      {
+        id: 'wire-z80-gnd',
+        start: { componentId: 'z80cpu', pinName: 'GND' },
         end: { componentId: 'arduino-uno', pinName: 'GND' },
         color: '#000000',
       },

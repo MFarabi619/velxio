@@ -26,15 +26,21 @@ logger = logging.getLogger(__name__)
 # Lazy-load the asm8080 module from this services dir so the import stays
 # explicit (no implicit sys.path manipulation).
 _ASM_MODULE = None
+_ASM_Z80_MODULE = None
 
 
 def _asm8080():
     global _ASM_MODULE
     if _ASM_MODULE is None:
-        # The file ships alongside this one as backend/app/services/asm8080.py.
-        # Use importlib so test harnesses can mock it if needed.
         _ASM_MODULE = import_module("app.services.asm8080")
     return _ASM_MODULE
+
+
+def _asmz80():
+    global _ASM_Z80_MODULE
+    if _ASM_Z80_MODULE is None:
+        _ASM_Z80_MODULE = import_module("app.services.asmz80")
+    return _ASM_Z80_MODULE
 
 
 Target = Literal["8080", "z80", "8086", "4004"]
@@ -75,6 +81,11 @@ def parse_intel_hex(text: str) -> bytes:
 def assemble_8080(source: str) -> bytes:
     """Two-pass Intel 8080 assembler. Returns raw ROM bytes."""
     return _asm8080().assemble(source)
+
+
+def assemble_z80(source: str) -> bytes:
+    """Two-pass Zilog Z80 assembler. Returns raw ROM bytes."""
+    return _asmz80().assemble(source)
 
 
 def compile_rom(source: str, target: Target, fmt: Format) -> dict:
@@ -127,25 +138,32 @@ def compile_rom(source: str, target: Target, fmt: Format) -> dict:
                 data = assemble_8080(source)
             except Exception as e:  # noqa: BLE001
                 return {
-                    "success": False,
-                    "rom_base64": None,
-                    "byte_size": 0,
-                    "stderr": "",
-                    "error": f"asm8080: {e}",
+                    "success": False, "rom_base64": None, "byte_size": 0,
+                    "stderr": "", "error": f"asm8080: {e}",
                 }
+        elif tgt_l == "z80":
+            try:
+                data = assemble_z80(source)
+            except Exception as e:  # noqa: BLE001
+                return {
+                    "success": False, "rom_base64": None, "byte_size": 0,
+                    "stderr": "", "error": f"asm-z80: {e}",
+                }
+        else:
             return {
-                "success": True,
-                "rom_base64": base64.b64encode(data).decode("ascii"),
-                "byte_size": len(data),
+                "success": False, "rom_base64": None, "byte_size": 0,
                 "stderr": "",
-                "error": None,
+                "error": (
+                    f"No assembler for target {target!r} yet. Supported: "
+                    "8080, z80. Try uploading a .hex or .bin compiled with "
+                    "your own toolchain."
+                ),
             }
         return {
-            "success": False,
-            "rom_base64": None,
-            "byte_size": 0,
-            "stderr": "",
-            "error": f"No assembler for target {target!r} yet — only 8080 is wired up.",
+            "success": True,
+            "rom_base64": base64.b64encode(data).decode("ascii"),
+            "byte_size": len(data),
+            "stderr": "", "error": None,
         }
 
     return {
